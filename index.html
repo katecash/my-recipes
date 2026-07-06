@@ -256,6 +256,19 @@
   .form-row label { flex: 1; }
 
   .form-actions { display: flex; gap: 10px; padding: 0 16px; }
+
+  #fetch-status {
+    font-size: .78rem;
+    margin-top: 5px;
+    min-height: 1.1em;
+    transition: opacity .2s;
+  }
+  #fetch-status.loading { color: var(--muted); }
+  #fetch-status.loading::before { content: '⏳ '; }
+  #fetch-status.success { color: #2E7D32; }
+  #fetch-status.success::before { content: '✓ '; }
+  #fetch-status.error   { color: #B71C1C; }
+  #fetch-status.error::before   { content: '✗ '; }
 </style>
 </head>
 <body>
@@ -333,10 +346,11 @@
           <option value="seafood">Seafood</option>
         </select>
       </label>
-      <label>Source URL <span>(Instagram or Facebook link)</span>
+      <label>Source URL <span>(paste an Instagram, Facebook or recipe website link — title and image will fill in automatically)</span>
         <input id="f-url" type="url" placeholder="https://www.instagram.com/p/...">
+        <div id="fetch-status"></div>
       </label>
-      <label>Image URL <span>(optional — paste a photo link)</span>
+      <label>Image URL <span>(filled automatically, or paste your own)</span>
         <input id="f-image" type="url" placeholder="https://...">
       </label>
       <label>Notes
@@ -539,6 +553,83 @@ function closeForm(e) {
 // ── Overlay helpers ──
 function openOverlay(id) { document.getElementById(id).classList.add('open'); }
 function closeOverlay(id) { document.getElementById(id).classList.remove('open'); }
+
+// ── Auto-fetch meta from pasted URL ──
+function decodeEntities(s) {
+  return s.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
+}
+
+function getOgTag(html, prop) {
+  const patterns = [
+    new RegExp(`<meta[^>]+property=["']og:${prop}["'][^>]+content=["']([^"']+)["']`,'i'),
+    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:${prop}["']`,'i'),
+    new RegExp(`<meta[^>]+name=["']${prop}["'][^>]+content=["']([^"']+)["']`,'i'),
+  ];
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m) return decodeEntities(m[1]);
+  }
+  return null;
+}
+
+function getTitleTag(html) {
+  const m = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  return m ? decodeEntities(m[1].trim()) : null;
+}
+
+let fetchController = null;
+
+async function autoFetchMeta(url) {
+  const statusEl = document.getElementById('fetch-status');
+  const titleField = document.getElementById('f-title');
+  const imageField = document.getElementById('f-image');
+
+  if (!url || !url.startsWith('http')) return;
+
+  if (fetchController) fetchController.abort();
+  fetchController = new AbortController();
+
+  statusEl.textContent = 'Fetching details…';
+  statusEl.className = 'loading';
+
+  try {
+    const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(url);
+    const res = await fetch(proxyUrl, { signal: fetchController.signal });
+    if (!res.ok) throw new Error('proxy error');
+    const data = await res.json();
+    const html = data.contents || '';
+
+    const ogTitle = getOgTag(html, 'title') || getTitleTag(html);
+    const ogImage = getOgTag(html, 'image');
+
+    let filled = 0;
+    if (ogTitle && !titleField.value.trim()) { titleField.value = ogTitle; filled++; }
+    if (ogImage && !imageField.value.trim()) { imageField.value = ogImage; filled++; }
+
+    if (filled > 0) {
+      statusEl.textContent = filled === 2 ? 'Title and image filled in' : 'Details filled in';
+      statusEl.className = 'success';
+    } else if (ogTitle || ogImage) {
+      statusEl.textContent = 'Fetched — fields already filled in';
+      statusEl.className = 'success';
+    } else {
+      statusEl.textContent = 'Could not read details from this URL — fill in manually';
+      statusEl.className = 'error';
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    statusEl.textContent = 'Could not reach this URL — fill in title and image manually';
+    statusEl.className = 'error';
+  }
+
+  setTimeout(() => { statusEl.textContent = ''; statusEl.className = ''; }, 5000);
+}
+
+const urlInput = document.getElementById('f-url');
+urlInput.addEventListener('blur', () => autoFetchMeta(urlInput.value.trim()));
+urlInput.addEventListener('paste', e => {
+  setTimeout(() => autoFetchMeta(urlInput.value.trim()), 100);
+});
 
 // ── Init ──
 if ('serviceWorker' in navigator) {
