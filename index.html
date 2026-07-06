@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#5C3D2E">
+<title>My Recipes</title>
+<link rel="manifest" href="manifest.json">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --brown:    #5C3D2E;
+    --rust:     #A0522D;
+    --gold:     #C8860A;
+    --cream:    #FAF6F0;
+    --card-bg:  #FFFFFF;
+    --border:   #E8DDD4;
+    --text:     #2A1F1A;
+    --muted:    #7A6358;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bot: env(safe-area-inset-bottom, 0px);
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--cream);
+    color: var(--text);
+    min-height: 100dvh;
+  }
+
+  /* ── Header ── */
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--brown);
+    padding: calc(var(--safe-top) + 12px) 16px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.25);
+  }
+  header h1 { color: #fff; font-size: 1.2rem; font-weight: 700; flex: 1; letter-spacing: .02em; }
+  header h1 span { font-size: .75rem; font-weight: 400; opacity: .7; display: block; }
+
+  #search-input {
+    flex: 2;
+    background: rgba(255,255,255,.15);
+    border: 1px solid rgba(255,255,255,.25);
+    border-radius: 20px;
+    padding: 7px 14px;
+    color: #fff;
+    font-size: .9rem;
+    outline: none;
+    min-width: 0;
+  }
+  #search-input::placeholder { color: rgba(255,255,255,.6); }
+
+  #add-btn {
+    background: var(--gold);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 38px; height: 38px;
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* ── Category filter ── */
+  .cats {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    background: var(--cream);
+    border-bottom: 1px solid var(--border);
+    scrollbar-width: none;
+  }
+  .cats::-webkit-scrollbar { display: none; }
+  .cat-btn {
+    white-space: nowrap;
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1.5px solid var(--border);
+    background: var(--card-bg);
+    color: var(--muted);
+    font-size: .82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .15s;
+    flex-shrink: 0;
+  }
+  .cat-btn.active {
+    background: var(--brown);
+    border-color: var(--brown);
+    color: #fff;
+  }
+
+  /* ── Grid ── */
+  #grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .card {
+    background: var(--card-bg);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    cursor: pointer;
+    transition: transform .15s;
+    border: 1px solid var(--border);
+  }
+  .card:active { transform: scale(.97); }
+
+  .card-thumb {
+    width: 100%;
+    aspect-ratio: 4/3;
+    object-fit: cover;
+    background: var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2.2rem;
+    color: var(--muted);
+  }
+  .card-thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+  .card-body { padding: 10px 11px 12px; }
+  .card-cat {
+    display: inline-block;
+    font-size: .68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    padding: 2px 7px;
+    border-radius: 10px;
+    margin-bottom: 5px;
+  }
+  .card-title { font-size: .9rem; font-weight: 600; line-height: 1.3; color: var(--text); }
+
+  .empty {
+    grid-column: 1/-1;
+    text-align: center;
+    padding: 60px 24px;
+    color: var(--muted);
+  }
+  .empty p { font-size: 1rem; margin-top: 8px; }
+
+  /* ── Category colours ── */
+  .cat-health-hacks { background: #E8F5E9; color: #2E7D32; }
+  .cat-lamb         { background: #FCE4EC; color: #880E4F; }
+  .cat-beef         { background: #FBE9E7; color: #BF360C; }
+  .cat-baking       { background: #FFF8E1; color: #F57F17; }
+  .cat-salads       { background: #E8F5E9; color: #1B5E20; }
+  .cat-seafood      { background: #E3F2FD; color: #0D47A1; }
+
+  /* ── Overlay / Modal ── */
+  .overlay {
+    display: none;
+    position: fixed; inset: 0;
+    z-index: 200;
+    background: rgba(0,0,0,.45);
+    align-items: flex-end;
+  }
+  .overlay.open { display: flex; }
+
+  .sheet {
+    background: var(--cream);
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: 20px 20px 0 0;
+    overflow-y: auto;
+    padding: 0 0 calc(var(--safe-bot) + 24px);
+    animation: slideUp .25s ease;
+  }
+  @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+  .sheet-handle {
+    width: 40px; height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin: 12px auto 0;
+  }
+  .sheet-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 16px 16px 10px;
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0;
+    background: var(--cream);
+    z-index: 1;
+  }
+  .sheet-header h2 { flex: 1; font-size: 1.1rem; font-weight: 700; }
+  .sheet-close {
+    background: var(--border); border: none; border-radius: 50%;
+    width: 30px; height: 30px; font-size: 1rem; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; color: var(--muted);
+  }
+
+  /* ── View sheet ── */
+  .view-image {
+    width: 100%; aspect-ratio: 16/9; object-fit: cover;
+    background: var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 3rem; color: var(--muted);
+  }
+  .view-image img { width: 100%; height: 100%; object-fit: cover; }
+  .view-body { padding: 16px; }
+  .view-cat { margin-bottom: 6px; }
+  .view-title { font-size: 1.3rem; font-weight: 700; margin-bottom: 4px; line-height: 1.3; }
+  .view-url { margin-bottom: 14px; }
+  .view-url a { color: var(--rust); font-size: .85rem; word-break: break-all; }
+
+  .view-section { margin-top: 16px; }
+  .view-section h3 { font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 6px; }
+  .view-section p { font-size: .92rem; line-height: 1.6; white-space: pre-wrap; }
+
+  .view-actions {
+    display: flex; gap: 10px; margin-top: 20px;
+  }
+  .btn {
+    flex: 1; padding: 12px; border-radius: 10px; border: none;
+    font-size: .95rem; font-weight: 600; cursor: pointer;
+  }
+  .btn-edit   { background: var(--brown); color: #fff; }
+  .btn-delete { background: #FBE9E7; color: #BF360C; }
+  .btn-save   { background: var(--brown); color: #fff; }
+  .btn-cancel { background: var(--border); color: var(--muted); }
+
+  /* ── Form ── */
+  .form-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: .82rem; font-weight: 600; color: var(--muted); }
+  label span { font-size: .75rem; font-weight: 400; }
+  input, select, textarea {
+    background: var(--card-bg);
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: .95rem;
+    color: var(--text);
+    outline: none;
+    font-family: inherit;
+    width: 100%;
+    transition: border-color .15s;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--brown); }
+  textarea { resize: vertical; min-height: 80px; }
+
+  .form-row { display: flex; gap: 10px; }
+  .form-row label { flex: 1; }
+
+  .form-actions { display: flex; gap: 10px; padding: 0 16px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>My Recipes <span>tap + to add</span></h1>
+  <input id="search-input" type="search" placeholder="Search..." autocomplete="off">
+  <button id="add-btn" onclick="openAdd()" aria-label="Add recipe">+</button>
+</header>
+
+<div class="cats" id="cats">
+  <button class="cat-btn active" data-cat="all" onclick="setFilter('all',this)">All</button>
+  <button class="cat-btn" data-cat="health-hacks" onclick="setFilter('health-hacks',this)">Health hacks</button>
+  <button class="cat-btn" data-cat="lamb" onclick="setFilter('lamb',this)">Lamb</button>
+  <button class="cat-btn" data-cat="beef" onclick="setFilter('beef',this)">Beef</button>
+  <button class="cat-btn" data-cat="baking" onclick="setFilter('baking',this)">Baking</button>
+  <button class="cat-btn" data-cat="salads" onclick="setFilter('salads',this)">Salads</button>
+  <button class="cat-btn" data-cat="seafood" onclick="setFilter('seafood',this)">Seafood</button>
+</div>
+
+<div id="grid"></div>
+
+<!-- View overlay -->
+<div class="overlay" id="view-overlay" onclick="closeView(event)">
+  <div class="sheet" id="view-sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h2 id="view-heading">Recipe</h2>
+      <button class="sheet-close" onclick="closeOverlay('view-overlay')">×</button>
+    </div>
+    <div class="view-image" id="view-img-wrap"></div>
+    <div class="view-body">
+      <div class="view-cat"><span class="card-cat" id="view-cat-badge"></span></div>
+      <div class="view-title" id="view-title"></div>
+      <div class="view-url" id="view-url"></div>
+      <div class="view-section" id="view-notes-sec">
+        <h3>Notes</h3>
+        <p id="view-notes"></p>
+      </div>
+      <div class="view-section" id="view-ing-sec">
+        <h3>Ingredients</h3>
+        <p id="view-ing"></p>
+      </div>
+      <div class="view-section" id="view-method-sec">
+        <h3>Method</h3>
+        <p id="view-method"></p>
+      </div>
+      <div class="view-actions">
+        <button class="btn btn-edit" onclick="openEdit()">Edit</button>
+        <button class="btn btn-delete" onclick="deleteRecipe()">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add / Edit overlay -->
+<div class="overlay" id="form-overlay" onclick="closeForm(event)">
+  <div class="sheet" id="form-sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h2 id="form-heading">Add recipe</h2>
+      <button class="sheet-close" onclick="closeOverlay('form-overlay')">×</button>
+    </div>
+    <div class="form-body">
+      <label>Title *
+        <input id="f-title" type="text" placeholder="e.g. Slow-roasted lamb shoulder" required>
+      </label>
+      <label>Category *
+        <select id="f-cat">
+          <option value="health-hacks">Health hacks</option>
+          <option value="lamb">Lamb</option>
+          <option value="beef">Beef</option>
+          <option value="baking">Baking</option>
+          <option value="salads">Salads</option>
+          <option value="seafood">Seafood</option>
+        </select>
+      </label>
+      <label>Source URL <span>(Instagram or Facebook link)</span>
+        <input id="f-url" type="url" placeholder="https://www.instagram.com/p/...">
+      </label>
+      <label>Image URL <span>(optional — paste a photo link)</span>
+        <input id="f-image" type="url" placeholder="https://...">
+      </label>
+      <label>Notes
+        <textarea id="f-notes" placeholder="Where you found it, who shared it, any tips..."></textarea>
+      </label>
+      <label>Ingredients
+        <textarea id="f-ing" placeholder="One per line..." rows="5"></textarea>
+      </label>
+      <label>Method
+        <textarea id="f-method" placeholder="Steps..." rows="6"></textarea>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-cancel" onclick="closeOverlay('form-overlay')">Cancel</button>
+      <button class="btn btn-save" onclick="saveRecipe()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const CAT_LABELS = {
+  'health-hacks': 'Health hacks',
+  'lamb':         'Lamb',
+  'beef':         'Beef',
+  'baking':       'Baking',
+  'salads':       'Salads',
+  'seafood':      'Seafood',
+};
+const CAT_EMOJI = {
+  'health-hacks': '🥗',
+  'lamb':         '🍖',
+  'beef':         '🥩',
+  'baking':       '🍞',
+  'salads':       '🥙',
+  'seafood':      '🦐',
+};
+
+let recipes = JSON.parse(localStorage.getItem('my-recipes') || '[]');
+let filter = 'all';
+let search = '';
+let viewingId = null;
+
+function save() { localStorage.setItem('my-recipes', JSON.stringify(recipes)); }
+
+function render() {
+  const grid = document.getElementById('grid');
+  const q = search.toLowerCase();
+  const list = recipes.filter(r => {
+    const catOk = filter === 'all' || r.cat === filter;
+    const searchOk = !q || r.title.toLowerCase().includes(q) || (r.notes||'').toLowerCase().includes(q);
+    return catOk && searchOk;
+  }).sort((a,b) => b.id - a.id);
+
+  if (!list.length) {
+    grid.innerHTML = '<div class="empty"><div style="font-size:2.5rem">🍽️</div><p>No recipes yet.<br>Tap + to add your first one.</p></div>';
+    return;
+  }
+
+  grid.innerHTML = list.map(r => `
+    <div class="card" onclick="openView(${r.id})">
+      <div class="card-thumb">
+        ${r.image ? `<img src="${esc(r.image)}" onerror="this.style.display='none'" loading="lazy">` : CAT_EMOJI[r.cat] || '🍴'}
+      </div>
+      <div class="card-body">
+        <span class="card-cat cat-${r.cat}">${CAT_LABELS[r.cat]}</span>
+        <div class="card-title">${esc(r.title)}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function setFilter(cat, btn) {
+  filter = cat;
+  document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  render();
+}
+
+document.getElementById('search-input').addEventListener('input', e => {
+  search = e.target.value;
+  render();
+});
+
+// ── View ──
+function openView(id) {
+  const r = recipes.find(x => x.id === id);
+  if (!r) return;
+  viewingId = id;
+
+  document.getElementById('view-heading').textContent = r.title;
+  document.getElementById('view-title').textContent = r.title;
+
+  const badge = document.getElementById('view-cat-badge');
+  badge.textContent = CAT_LABELS[r.cat];
+  badge.className = `card-cat cat-${r.cat}`;
+
+  const urlDiv = document.getElementById('view-url');
+  urlDiv.innerHTML = r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">Open original post</a>` : '';
+
+  const imgWrap = document.getElementById('view-img-wrap');
+  if (r.image) {
+    imgWrap.innerHTML = `<img src="${esc(r.image)}" onerror="this.parentElement.innerHTML='${CAT_EMOJI[r.cat]||'🍴'}'">`;
+  } else {
+    imgWrap.textContent = CAT_EMOJI[r.cat] || '🍴';
+  }
+
+  const notesSec = document.getElementById('view-notes-sec');
+  document.getElementById('view-notes').textContent = r.notes || '';
+  notesSec.style.display = r.notes ? '' : 'none';
+
+  const ingSec = document.getElementById('view-ing-sec');
+  document.getElementById('view-ing').textContent = r.ingredients || '';
+  ingSec.style.display = r.ingredients ? '' : 'none';
+
+  const methodSec = document.getElementById('view-method-sec');
+  document.getElementById('view-method').textContent = r.method || '';
+  methodSec.style.display = r.method ? '' : 'none';
+
+  openOverlay('view-overlay');
+}
+
+function closeView(e) {
+  if (e.target === document.getElementById('view-overlay')) closeOverlay('view-overlay');
+}
+
+// ── Add / Edit ──
+function openAdd() {
+  viewingId = null;
+  document.getElementById('form-heading').textContent = 'Add recipe';
+  document.getElementById('f-title').value = '';
+  document.getElementById('f-cat').value = 'health-hacks';
+  document.getElementById('f-url').value = '';
+  document.getElementById('f-image').value = '';
+  document.getElementById('f-notes').value = '';
+  document.getElementById('f-ing').value = '';
+  document.getElementById('f-method').value = '';
+  closeOverlay('view-overlay');
+  openOverlay('form-overlay');
+}
+
+function openEdit() {
+  const r = recipes.find(x => x.id === viewingId);
+  if (!r) return;
+  document.getElementById('form-heading').textContent = 'Edit recipe';
+  document.getElementById('f-title').value = r.title;
+  document.getElementById('f-cat').value = r.cat;
+  document.getElementById('f-url').value = r.url || '';
+  document.getElementById('f-image').value = r.image || '';
+  document.getElementById('f-notes').value = r.notes || '';
+  document.getElementById('f-ing').value = r.ingredients || '';
+  document.getElementById('f-method').value = r.method || '';
+  closeOverlay('view-overlay');
+  openOverlay('form-overlay');
+}
+
+function saveRecipe() {
+  const title = document.getElementById('f-title').value.trim();
+  if (!title) { document.getElementById('f-title').focus(); return; }
+
+  const data = {
+    title,
+    cat:         document.getElementById('f-cat').value,
+    url:         document.getElementById('f-url').value.trim(),
+    image:       document.getElementById('f-image').value.trim(),
+    notes:       document.getElementById('f-notes').value.trim(),
+    ingredients: document.getElementById('f-ing').value.trim(),
+    method:      document.getElementById('f-method').value.trim(),
+  };
+
+  if (viewingId) {
+    const idx = recipes.findIndex(x => x.id === viewingId);
+    recipes[idx] = { ...recipes[idx], ...data };
+  } else {
+    data.id = Date.now();
+    recipes.unshift(data);
+  }
+
+  save();
+  render();
+  closeOverlay('form-overlay');
+}
+
+function deleteRecipe() {
+  if (!confirm('Delete this recipe?')) return;
+  recipes = recipes.filter(x => x.id !== viewingId);
+  save();
+  render();
+  closeOverlay('view-overlay');
+  viewingId = null;
+}
+
+function closeForm(e) {
+  if (e.target === document.getElementById('form-overlay')) closeOverlay('form-overlay');
+}
+
+// ── Overlay helpers ──
+function openOverlay(id) { document.getElementById(id).classList.add('open'); }
+function closeOverlay(id) { document.getElementById(id).classList.remove('open'); }
+
+// ── Init ──
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+render();
+</script>
+</body>
+</html>
