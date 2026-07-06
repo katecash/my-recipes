@@ -1049,11 +1049,34 @@ function bulkImport() {
   document.getElementById('find-btn').textContent = 'Find links';
 }
 
+// ── Seed data auto-load ──
+async function loadSeedData() {
+  const SEED_VER = 'seed-v1';
+  if (localStorage.getItem(SEED_VER)) return;
+  try {
+    const res = await fetch('./seed-recipes.json?v=1');
+    if (!res.ok) return;
+    const seeds = await res.json();
+    if (!Array.isArray(seeds) || !seeds.length) return;
+    const existingUrls = new Set(recipes.map(r => r.url).filter(Boolean));
+    let added = 0;
+    for (const r of seeds) {
+      if (r.url && existingUrls.has(r.url)) continue;
+      recipes.push(r);
+      added++;
+    }
+    if (added > 0) { save(); render(); }
+    localStorage.setItem(SEED_VER, '1');
+    if (added > 0) console.log(`Loaded ${added} pre-saved recipes`);
+  } catch { /* no seed file yet */ }
+}
+
 // ── Init ──
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 render();
+loadSeedData();
 </script>
 </body>
 </html>
