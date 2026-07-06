@@ -648,6 +648,63 @@ function closeForm(e) {
 function openOverlay(id) { document.getElementById(id).classList.add('open'); }
 function closeOverlay(id) { document.getElementById(id).classList.remove('open'); }
 
+// ── Recipe schema extraction ──
+function stripHtml(s) {
+  return String(s || '').replace(/<[^>]+>/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+
+function extractFromSchema(schema) {
+  let ingredients = '';
+  let method = '';
+
+  if (Array.isArray(schema.recipeIngredient) && schema.recipeIngredient.length) {
+    ingredients = schema.recipeIngredient.map(s => stripHtml(decodeEntities(s))).join('\n');
+  }
+
+  const inst = schema.recipeInstructions;
+  if (inst) {
+    if (typeof inst === 'string') {
+      method = stripHtml(decodeEntities(inst));
+    } else if (Array.isArray(inst)) {
+      const steps = [];
+      let n = 1;
+      for (const step of inst) {
+        if (!step) continue;
+        if (typeof step === 'string') {
+          steps.push(`${n++}. ${stripHtml(decodeEntities(step))}`);
+        } else if (step['@type'] === 'HowToSection') {
+          if (step.name) steps.push(`\n${step.name}`);
+          for (const sub of (step.itemListElement || [])) {
+            const txt = stripHtml(decodeEntities(sub.text || sub.name || ''));
+            if (txt) steps.push(`${n++}. ${txt}`);
+          }
+        } else {
+          const txt = stripHtml(decodeEntities(step.text || step.name || ''));
+          if (txt) steps.push(`${n++}. ${txt}`);
+        }
+      }
+      method = steps.join('\n').trim();
+    }
+  }
+  return { ingredients, method };
+}
+
+function parseRecipeSchema(html) {
+  const re = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    try {
+      const raw = JSON.parse(m[1]);
+      const schemas = Array.isArray(raw) ? raw : (raw['@graph'] ? raw['@graph'] : [raw]);
+      for (const s of schemas) {
+        const types = Array.isArray(s['@type']) ? s['@type'] : [s['@type']];
+        if (types.includes('Recipe')) return extractFromSchema(s);
+      }
+    } catch { /* malformed JSON */ }
+  }
+  return null;
+}
+
 // ── Auto-fetch meta from pasted URL ──
 function decodeEntities(s) {
   return s.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
@@ -832,10 +889,14 @@ function extractUrlsWithLabels(text) {
 }
 
 function statusText(item) {
-  if (item.status === 'loading')  return 'Fetching…';
-  if (item.status === 'done')     return item.image ? 'Ready' : 'Ready — no image found';
-  if (item.status === 'partial')  return 'Saved with your title — no image';
-  if (item.status === 'failed')   return 'No title or image found — will save link only';
+  if (item.status === 'loading') return 'Fetching…';
+  if (item.status === 'done') {
+    if (item.ingredients) return 'Ingredients and method extracted';
+    if (item.image)        return 'Ready — no recipe details on this page';
+    return 'Ready';
+  }
+  if (item.status === 'partial') return 'Saved with your title — no recipe details';
+  if (item.status === 'failed')  return 'No details found — will save link only';
   return '';
 }
 function statusClass(item) {
@@ -913,7 +974,7 @@ async function findLinks() {
 
   bulkItems = urlData.map((d, i) => {
     const cat = guessCategory(d.label, d.url) || defaultCat;
-    return { id: i, url: d.url, title: d.label, image: '', status: 'loading', cat };
+    return { id: i, url: d.url, title: d.label, image: '', ingredients: '', method: '', status: 'loading', cat };
   });
 
   renderBulkList();
@@ -928,10 +989,15 @@ async function findLinks() {
       const html = data.contents || '';
       const fetchedTitle = getOgTag(html, 'title') || getTitleTag(html) || '';
       const fetchedImage = getOgTag(html, 'image') || '';
-      // Keep the user's own label over the fetched title
       if (!item.title && fetchedTitle) item.title = fetchedTitle;
       if (fetchedImage) item.image = fetchedImage;
-      // Re-guess category now we have a richer title (only if it was guessed from label alone)
+
+      const recipe = parseRecipeSchema(html);
+      if (recipe) {
+        if (recipe.ingredients) item.ingredients = recipe.ingredients;
+        if (recipe.method)      item.method      = recipe.method;
+      }
+
       const betterCat = guessCategory(item.title, item.url);
       if (betterCat) item.cat = betterCat;
       item.status = 'done';
@@ -958,12 +1024,14 @@ function bulkImport() {
     const cb = document.getElementById(`bc-${item.id}`);
     if (!cb || !cb.checked) continue;
     recipes.unshift({
-      id:    Date.now() + count,
-      title: item.title || item.url,
-      cat:   item.cat || defaultCat,
-      url:   item.url,
-      image: item.image || '',
-      notes: '', ingredients: '', method: '',
+      id:          Date.now() + count,
+      title:       item.title || item.url,
+      cat:         item.cat || defaultCat,
+      url:         item.url,
+      image:       item.image       || '',
+      ingredients: item.ingredients || '',
+      method:      item.method      || '',
+      notes: '',
     });
     count++;
   }
