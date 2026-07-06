@@ -269,12 +269,74 @@
   #fetch-status.success::before { content: '✓ '; }
   #fetch-status.error   { color: #B71C1C; }
   #fetch-status.error::before   { content: '✗ '; }
+
+  /* ── Form tabs ── */
+  .form-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--cream);
+  }
+  .form-tab {
+    flex: 1; padding: 10px; border: none;
+    background: none; font-size: .88rem; font-weight: 600;
+    color: var(--muted); cursor: pointer;
+    border-bottom: 2.5px solid transparent;
+    transition: all .15s;
+  }
+  .form-tab.active { color: var(--brown); border-bottom-color: var(--brown); }
+
+  /* ── Bulk import ── */
+  .bulk-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+
+  .find-btn {
+    width: 100%; padding: 12px; border-radius: 10px; border: none;
+    background: var(--brown); color: #fff; font-size: .95rem; font-weight: 600;
+    cursor: pointer;
+  }
+  .find-btn:disabled { opacity: .5; }
+
+  #bulk-list { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+
+  .bulk-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    background: var(--card-bg); border: 1.5px solid var(--border);
+    border-radius: 12px; padding: 10px;
+  }
+  .bulk-item.failed { opacity: .55; }
+  .bulk-item input[type=checkbox] { margin-top: 3px; width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--brown); }
+  .bulk-thumb {
+    width: 52px; height: 52px; border-radius: 8px; object-fit: cover;
+    background: var(--border); flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.4rem; overflow: hidden;
+  }
+  .bulk-thumb img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; }
+  .bulk-info { flex: 1; min-width: 0; }
+  .bulk-title {
+    font-size: .88rem; font-weight: 600; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .bulk-url {
+    font-size: .72rem; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-top: 2px;
+  }
+  .bulk-status { font-size: .72rem; margin-top: 4px; }
+  .bulk-status.loading { color: var(--muted); }
+  .bulk-status.done    { color: #2E7D32; }
+  .bulk-status.failed  { color: #B71C1C; }
+
+  #bulk-import-btn {
+    width: 100%; padding: 13px; border-radius: 10px; border: none;
+    background: var(--gold); color: #fff; font-size: 1rem; font-weight: 700;
+    cursor: pointer; display: none;
+  }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>My Recipes <span>tap + to add</span></h1>
+  <h1>My Recipes <span>tap + to add or bulk import</span></h1>
   <input id="search-input" type="search" placeholder="Search..." autocomplete="off">
   <button id="add-btn" onclick="openAdd()" aria-label="Add recipe">+</button>
 </header>
@@ -332,6 +394,11 @@
       <h2 id="form-heading">Add recipe</h2>
       <button class="sheet-close" onclick="closeOverlay('form-overlay')">×</button>
     </div>
+    <div class="form-tabs">
+      <button class="form-tab active" onclick="switchTab('single',this)">Single recipe</button>
+      <button class="form-tab" onclick="switchTab('bulk',this)">Bulk import</button>
+    </div>
+    <div id="tab-single">
     <div class="form-body">
       <label>Title *
         <input id="f-title" type="text" placeholder="e.g. Slow-roasted lamb shoulder" required>
@@ -367,6 +434,28 @@
       <button class="btn btn-cancel" onclick="closeOverlay('form-overlay')">Cancel</button>
       <button class="btn btn-save" onclick="saveRecipe()">Save</button>
     </div>
+    </div><!-- end tab-single -->
+
+    <div id="tab-bulk" style="display:none">
+      <div class="bulk-body">
+        <label>Category for all recipes
+          <select id="bulk-cat">
+            <option value="health-hacks">Health hacks</option>
+            <option value="lamb">Lamb</option>
+            <option value="beef">Beef</option>
+            <option value="baking">Baking</option>
+            <option value="salads">Salads</option>
+            <option value="seafood">Seafood</option>
+          </select>
+        </label>
+        <label>Paste your WhatsApp message <span>all links will be found and fetched automatically</span>
+          <textarea id="bulk-text" rows="5" placeholder="Paste the whole message here — links mixed with text is fine"></textarea>
+        </label>
+        <button class="find-btn" id="find-btn" onclick="findLinks()">Find links</button>
+        <div id="bulk-list"></div>
+        <button id="bulk-import-btn" onclick="bulkImport()">Save recipes</button>
+      </div>
+    </div><!-- end tab-bulk -->
   </div>
 </div>
 
@@ -630,6 +719,149 @@ urlInput.addEventListener('blur', () => autoFetchMeta(urlInput.value.trim()));
 urlInput.addEventListener('paste', e => {
   setTimeout(() => autoFetchMeta(urlInput.value.trim()), 100);
 });
+
+// ── Bulk import ──
+let bulkItems = [];
+
+function switchTab(tab, btn) {
+  document.querySelectorAll('.form-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab-single').style.display = tab === 'single' ? '' : 'none';
+  document.getElementById('tab-bulk').style.display   = tab === 'bulk'   ? '' : 'none';
+}
+
+function extractUrls(text) {
+  const re = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi;
+  const found = text.match(re) || [];
+  return [...new Set(found.map(u => u.replace(/[.,;!?)]+$/, '')))];
+}
+
+function renderBulkList() {
+  const el = document.getElementById('bulk-list');
+  if (!bulkItems.length) { el.innerHTML = ''; return; }
+
+  el.innerHTML = bulkItems.map(item => `
+    <div class="bulk-item${item.status === 'failed' ? ' failed' : ''}" id="bi-${item.id}">
+      <input type="checkbox" id="bc-${item.id}" ${item.status !== 'failed' ? 'checked' : ''}>
+      <div class="bulk-thumb" id="bt-${item.id}">
+        ${item.image
+          ? `<img src="${esc(item.image)}" onerror="this.parentElement.textContent='${CAT_EMOJI[document.getElementById('bulk-cat').value]||'🍴'}';">`
+          : (CAT_EMOJI[document.getElementById('bulk-cat').value] || '🍴')}
+      </div>
+      <div class="bulk-info">
+        <div class="bulk-title">${esc(item.title || item.url)}</div>
+        <div class="bulk-url">${esc(item.url)}</div>
+        <div class="bulk-status ${item.status}" id="bs-${item.id}">
+          ${item.status === 'loading' ? 'Fetching…'
+            : item.status === 'done'    ? 'Ready'
+            : item.status === 'failed'  ? 'Could not fetch — will save URL only'
+            : ''}
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function updateBulkItem(item) {
+  const row = document.getElementById(`bi-${item.id}`);
+  if (!row) return;
+  row.className = `bulk-item${item.status === 'failed' ? ' failed' : ''}`;
+
+  const thumbEl = document.getElementById(`bt-${item.id}`);
+  const cat = document.getElementById('bulk-cat').value;
+  if (item.image) {
+    thumbEl.innerHTML = `<img src="${esc(item.image)}" onerror="this.parentElement.textContent='${CAT_EMOJI[cat]||'🍴'}';">`;
+  } else {
+    thumbEl.textContent = CAT_EMOJI[cat] || '🍴';
+  }
+
+  const infoEl = row.querySelector('.bulk-title');
+  infoEl.textContent = item.title || item.url;
+
+  const statusEl = document.getElementById(`bs-${item.id}`);
+  statusEl.className = `bulk-status ${item.status}`;
+  statusEl.textContent = item.status === 'loading' ? 'Fetching…'
+    : item.status === 'done'   ? 'Ready'
+    : item.status === 'failed' ? 'Could not fetch — will save URL only'
+    : '';
+
+  const cb = document.getElementById(`bc-${item.id}`);
+  if (item.status === 'failed') cb.checked = false;
+}
+
+async function findLinks() {
+  const text = document.getElementById('bulk-text').value;
+  const urls = extractUrls(text);
+
+  if (!urls.length) {
+    alert('No links found. Make sure you pasted the full message.');
+    return;
+  }
+
+  const findBtn = document.getElementById('find-btn');
+  findBtn.disabled = true;
+  findBtn.textContent = 'Finding…';
+
+  bulkItems = urls.map((url, i) => ({ id: i, url, title: '', image: '', status: 'loading' }));
+  renderBulkList();
+  document.getElementById('bulk-import-btn').style.display = 'none';
+
+  for (const item of bulkItems) {
+    try {
+      const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(item.url);
+      const res = await fetch(proxyUrl);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      const html = data.contents || '';
+      item.title = getOgTag(html, 'title') || getTitleTag(html) || '';
+      item.image = getOgTag(html, 'image') || '';
+      item.status = 'done';
+    } catch {
+      item.status = 'failed';
+    }
+    updateBulkItem(item);
+  }
+
+  const doneCount = bulkItems.filter(i => i.status === 'done').length;
+  const importBtn = document.getElementById('bulk-import-btn');
+  importBtn.textContent = `Save ${doneCount} recipe${doneCount !== 1 ? 's' : ''}`;
+  importBtn.style.display = 'block';
+
+  findBtn.disabled = false;
+  findBtn.textContent = 'Find links again';
+}
+
+function bulkImport() {
+  const cat = document.getElementById('bulk-cat').value;
+  let count = 0;
+
+  for (const item of bulkItems) {
+    const cb = document.getElementById(`bc-${item.id}`);
+    if (!cb || !cb.checked) continue;
+    recipes.unshift({
+      id:    Date.now() + count,
+      title: item.title || item.url,
+      cat,
+      url:   item.url,
+      image: item.image,
+      notes: '', ingredients: '', method: '',
+    });
+    count++;
+  }
+
+  if (!count) { alert('No recipes selected.'); return; }
+
+  save();
+  render();
+  closeOverlay('form-overlay');
+
+  // reset bulk tab for next use
+  bulkItems = [];
+  document.getElementById('bulk-list').innerHTML = '';
+  document.getElementById('bulk-text').value = '';
+  document.getElementById('bulk-import-btn').style.display = 'none';
+  document.getElementById('find-btn').textContent = 'Find links';
+}
 
 // ── Init ──
 if ('serviceWorker' in navigator) {
