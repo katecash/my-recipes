@@ -730,43 +730,113 @@ function switchTab(tab, btn) {
   document.getElementById('tab-bulk').style.display   = tab === 'bulk'   ? '' : 'none';
 }
 
-function extractUrls(text) {
-  // Strip invisible unicode chars WhatsApp injects (LRM, RLM, directional marks)
-  const clean = text.replace(/[​-‏‪-‮﻿]/g, '');
-  // Match https://, http://, and bare www. links
-  const re = /(?:https?:\/\/|www\.)[^\s<>"{}|\\^`[\]]+/gi;
-  const found = clean.match(re) || [];
-  return [...new Set(
-    found
-      .map(u => {
-        if (u.toLowerCase().startsWith('www.')) u = 'https://' + u;
-        return u.replace(/[.,;!?)'"\]]+$/, '');
-      })
-      .filter(u => u.includes('.') && u.length > 10)
-  )];
+function toSentenceCase(s) {
+  if (!s) return s;
+  // If all caps (e.g. "BEEF RENDANG") convert to sentence case
+  if (s === s.toUpperCase() && /[A-Z]{2}/.test(s)) {
+    return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  }
+  return s;
+}
+
+// Extract URLs and any label the user typed before each link in WhatsApp format.
+// Returns [{url, label}]
+function extractUrlsWithLabels(text) {
+  // Strip WhatsApp invisible formatting chars using explicit Unicode escapes
+  const clean = text.replace(/[​‌‍‎‏‪‫‬‭‮﻿]/g, '');
+
+  const seen  = new Set();
+  const results = [];
+  const urlRe = /(?:https?:\/\/|www\.)[^\s<>"{}|\\^`[\]]+/g;
+
+  function addUrl(url, label) {
+    let u = url.replace(/[.,;!?)'"\]]+$/, '');
+    if (u.toLowerCase().startsWith('www.')) u = 'https://' + u;
+    if (seen.has(u) || !u.includes('.') || u.length < 12) return;
+    seen.add(u);
+    results.push({ url: u, label: toSentenceCase(label.trim()) });
+  }
+
+  // Split on WhatsApp timestamp markers: [D/M/YYYY, H:MM:SS am/pm] Name:
+  const stampRe = /\[\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?\]\s*[^:\n]+:\s*/gi;
+  const parts = clean.split(stampRe);
+
+  if (parts.length > 1) {
+    // WhatsApp format detected — parse message bodies
+    for (const body of parts.slice(1)) {
+      const trimmed = body
+        .replace(/‎?image omitted/gi, '')
+        .replace(/‎?video omitted/gi, '')
+        .replace(/‎?audio omitted/gi, '')
+        .replace(/‎?sticker omitted/gi, '')
+        .trim();
+
+      let m;
+      urlRe.lastIndex = 0;
+      while ((m = urlRe.exec(trimmed)) !== null) {
+        // Label = any non-URL text before this link in the same message
+        const before = trimmed.substring(0, m.index)
+          .replace(/\n+/g, ' ')
+          .replace(/[:\-–—]+$/, '')
+          .trim();
+        addUrl(m[0], before);
+      }
+    }
+  }
+
+  // Fallback: plain text paste with no WhatsApp timestamps
+  if (results.length === 0) {
+    // Try to extract label from line(s) immediately before each URL
+    const lines = clean.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      let m;
+      urlRe.lastIndex = 0;
+      while ((m = urlRe.exec(lines[i])) !== null) {
+        const inlineBefore = lines[i].substring(0, m.index).trim();
+        // Look at previous non-empty line as label if nothing inline
+        const prevLine = i > 0 ? lines[i - 1].trim() : '';
+        const label = inlineBefore || (prevLine && !prevLine.match(/https?:\/\//) ? prevLine : '');
+        addUrl(m[0], label);
+      }
+    }
+  }
+
+  return results;
+}
+
+function statusText(item) {
+  if (item.status === 'loading')  return 'Fetching…';
+  if (item.status === 'done')     return item.image ? 'Ready' : 'Ready — no image found';
+  if (item.status === 'partial')  return 'Saved with your title — no image';
+  if (item.status === 'failed')   return 'No title or image found — will save link only';
+  return '';
+}
+function statusClass(item) {
+  if (item.status === 'loading')  return 'loading';
+  if (item.status === 'done')     return 'done';
+  if (item.status === 'partial')  return 'done';
+  if (item.status === 'failed')   return 'failed';
+  return '';
 }
 
 function renderBulkList() {
   const el = document.getElementById('bulk-list');
   if (!bulkItems.length) { el.innerHTML = ''; return; }
+  const cat = document.getElementById('bulk-cat').value;
+  const emoji = CAT_EMOJI[cat] || '🍴';
 
   el.innerHTML = bulkItems.map(item => `
     <div class="bulk-item${item.status === 'failed' ? ' failed' : ''}" id="bi-${item.id}">
-      <input type="checkbox" id="bc-${item.id}" ${item.status !== 'failed' ? 'checked' : ''}>
+      <input type="checkbox" id="bc-${item.id}" checked>
       <div class="bulk-thumb" id="bt-${item.id}">
         ${item.image
-          ? `<img src="${esc(item.image)}" onerror="this.parentElement.textContent='${CAT_EMOJI[document.getElementById('bulk-cat').value]||'🍴'}';">`
-          : (CAT_EMOJI[document.getElementById('bulk-cat').value] || '🍴')}
+          ? `<img src="${esc(item.image)}" onerror="this.parentElement.textContent='${emoji}';">`
+          : emoji}
       </div>
       <div class="bulk-info">
         <div class="bulk-title">${esc(item.title || item.url)}</div>
         <div class="bulk-url">${esc(item.url)}</div>
-        <div class="bulk-status ${item.status}" id="bs-${item.id}">
-          ${item.status === 'loading' ? 'Fetching…'
-            : item.status === 'done'    ? 'Ready'
-            : item.status === 'failed'  ? 'Could not fetch — will save URL only'
-            : ''}
-        </div>
+        <div class="bulk-status ${statusClass(item)}" id="bs-${item.id}">${statusText(item)}</div>
       </div>
     </div>
   `).join('');
@@ -775,44 +845,42 @@ function renderBulkList() {
 function updateBulkItem(item) {
   const row = document.getElementById(`bi-${item.id}`);
   if (!row) return;
+
+  const cat = document.getElementById('bulk-cat').value;
+  const emoji = CAT_EMOJI[cat] || '🍴';
+
   row.className = `bulk-item${item.status === 'failed' ? ' failed' : ''}`;
 
   const thumbEl = document.getElementById(`bt-${item.id}`);
-  const cat = document.getElementById('bulk-cat').value;
   if (item.image) {
-    thumbEl.innerHTML = `<img src="${esc(item.image)}" onerror="this.parentElement.textContent='${CAT_EMOJI[cat]||'🍴'}';">`;
+    thumbEl.innerHTML = `<img src="${esc(item.image)}" onerror="this.parentElement.textContent='${emoji}';">`;
   } else {
-    thumbEl.textContent = CAT_EMOJI[cat] || '🍴';
+    thumbEl.textContent = emoji;
   }
 
-  const infoEl = row.querySelector('.bulk-title');
-  infoEl.textContent = item.title || item.url;
-
+  row.querySelector('.bulk-title').textContent = item.title || item.url;
   const statusEl = document.getElementById(`bs-${item.id}`);
-  statusEl.className = `bulk-status ${item.status}`;
-  statusEl.textContent = item.status === 'loading' ? 'Fetching…'
-    : item.status === 'done'   ? 'Ready'
-    : item.status === 'failed' ? 'Could not fetch — will save URL only'
-    : '';
-
-  const cb = document.getElementById(`bc-${item.id}`);
-  if (item.status === 'failed') cb.checked = false;
+  statusEl.className = `bulk-status ${statusClass(item)}`;
+  statusEl.textContent = statusText(item);
 }
 
 async function findLinks() {
   const text = document.getElementById('bulk-text').value;
-  const urls = extractUrls(text);
+  const urlData = extractUrlsWithLabels(text);
 
-  if (!urls.length) {
-    alert('No links found. Make sure you pasted the full message.');
+  if (!urlData.length) {
+    alert('No links found. Make sure you have pasted the full WhatsApp message or chat.');
     return;
   }
 
   const findBtn = document.getElementById('find-btn');
   findBtn.disabled = true;
-  findBtn.textContent = 'Finding…';
+  findBtn.textContent = `Found ${urlData.length} link${urlData.length !== 1 ? 's' : ''} — fetching details…`;
 
-  bulkItems = urls.map((url, i) => ({ id: i, url, title: '', image: '', status: 'loading' }));
+  bulkItems = urlData.map((d, i) => ({
+    id: i, url: d.url, title: d.label, image: '', status: 'loading'
+  }));
+
   renderBulkList();
   document.getElementById('bulk-import-btn').style.display = 'none';
 
@@ -823,18 +891,22 @@ async function findLinks() {
       if (!res.ok) throw new Error();
       const data = await res.json();
       const html = data.contents || '';
-      item.title = getOgTag(html, 'title') || getTitleTag(html) || '';
-      item.image = getOgTag(html, 'image') || '';
+      const fetchedTitle = getOgTag(html, 'title') || getTitleTag(html) || '';
+      const fetchedImage = getOgTag(html, 'image') || '';
+      // Keep the user's own label over the fetched title — it's usually better
+      if (!item.title && fetchedTitle) item.title = fetchedTitle;
+      if (fetchedImage) item.image = fetchedImage;
       item.status = 'done';
     } catch {
-      item.status = 'failed';
+      // If we have a label, item is still usable
+      item.status = item.title ? 'partial' : 'failed';
     }
     updateBulkItem(item);
   }
 
-  const doneCount = bulkItems.filter(i => i.status === 'done').length;
+  const importableCount = bulkItems.filter(i => i.status !== 'failed').length;
   const importBtn = document.getElementById('bulk-import-btn');
-  importBtn.textContent = `Save ${doneCount} recipe${doneCount !== 1 ? 's' : ''}`;
+  importBtn.textContent = `Save ${importableCount} recipe${importableCount !== 1 ? 's' : ''}`;
   importBtn.style.display = 'block';
 
   findBtn.disabled = false;
@@ -853,7 +925,7 @@ function bulkImport() {
       title: item.title || item.url,
       cat,
       url:   item.url,
-      image: item.image,
+      image: item.image || '',
       notes: '', ingredients: '', method: '',
     });
     count++;
@@ -865,7 +937,6 @@ function bulkImport() {
   render();
   closeOverlay('form-overlay');
 
-  // reset bulk tab for next use
   bulkItems = [];
   document.getElementById('bulk-list').innerHTML = '';
   document.getElementById('bulk-text').value = '';
