@@ -731,9 +731,19 @@ function switchTab(tab, btn) {
 }
 
 function extractUrls(text) {
-  const re = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi;
-  const found = text.match(re) || [];
-  return [...new Set(found.map(u => u.replace(/[.,;!?)]+$/, '')))];
+  // Strip invisible unicode chars WhatsApp injects (LRM, RLM, directional marks)
+  const clean = text.replace(/[​-‏‪-‮﻿]/g, '');
+  // Match https://, http://, and bare www. links
+  const re = /(?:https?:\/\/|www\.)[^\s<>"{}|\\^`[\]]+/gi;
+  const found = clean.match(re) || [];
+  return [...new Set(
+    found
+      .map(u => {
+        if (u.toLowerCase().startsWith('www.')) u = 'https://' + u;
+        return u.replace(/[.,;!?)'"\]]+$/, '');
+      })
+      .filter(u => u.includes('.') && u.length > 10)
+  )];
 }
 
 function renderBulkList() {
