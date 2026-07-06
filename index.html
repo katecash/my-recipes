@@ -312,10 +312,15 @@
   }
   .bulk-thumb img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; }
   .bulk-info { flex: 1; min-width: 0; }
+  .bulk-title-row {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
   .bulk-title {
     font-size: .88rem; font-weight: 600; color: var(--text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0;
   }
+  .bulk-cat-badge { font-size: .65rem; flex-shrink: 0; }
   .bulk-url {
     font-size: .72rem; color: var(--muted);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -438,7 +443,7 @@
 
     <div id="tab-bulk" style="display:none">
       <div class="bulk-body">
-        <label>Category for all recipes
+        <label>Default category <span>for recipes the app can't work out automatically</span>
           <select id="bulk-cat">
             <option value="health-hacks">Health hacks</option>
             <option value="lamb">Lamb</option>
@@ -730,6 +735,28 @@ function switchTab(tab, btn) {
   document.getElementById('tab-bulk').style.display   = tab === 'bulk'   ? '' : 'none';
 }
 
+function guessCategory(title, url) {
+  const t = (title + ' ' + url).toLowerCase();
+
+  if (/\blamb\b/.test(t)) return 'lamb';
+
+  if (/\bfish\b(?! sauce)|\bseafood\b|\bprawn\b|\bshrimp\b|\bsalmon\b|\btuna\b|\bsquid\b|\bcrab\b|\blobster\b|\bmussel\b|\boyster\b|\bbarramundi\b|\bsnapper\b|\bcalamari\b/.test(t)) return 'seafood';
+
+  if (/\bsalad\b|\bslaw\b/.test(t)) return 'salads';
+
+  // Beef — skip if chicken or pork is the starring protein
+  const beefHit = /\bbeef\b|\bsteak\b|short.?rib|\bbrisket\b|\bwagyu\b|\bpicanha\b|\bpichana\b|\bchuck\b|\bflank\b|\brump\b|\brendang\b|osso.?buco|\bmeatball|\bbolognese\b|\blasagn|\bpastrami\b|\bbolar\b|\bsirloin\b|\bribeye\b|\brib.?eye\b|\bpot.?roast\b/.test(t);
+  const chickenHit = /\bchicken\b|\bpoultry\b/.test(t);
+  const porkHit    = /\bpork\b|\bbacon\b(?! and eggs)|\bham\b/.test(t);
+  if (beefHit && !chickenHit && !porkHit) return 'beef';
+
+  if (/\bcake\b|\bbread\b(?! sauce)|\bbiscuit\b|\bmuffin\b|\bbrownie\b|\bcookie\b|\btorte\b|\bdonut\b|\bdoughnut\b|\bbun\b|\bloaf\b|\bscone\b|\bpastry\b|\bsourdough\b|almond.?flour|flatbread|seed.?bread|cinnamon.?roll/.test(t)) return 'baking';
+
+  if (/\bprotein\b|\bcalorie\b|\bketo\b|low.?carb|cottage.?cheese|\byogur[th]\b|plant.?based|\bvegan\b|high.?protein|\bgelatin\b|\bhealthy\b|sugar.?free|gluten.?free|air.?fryer/.test(t)) return 'health-hacks';
+
+  return null;
+}
+
 function toSentenceCase(s) {
   if (!s) return s;
   // If all caps (e.g. "BEEF RENDANG") convert to sentence case
@@ -834,7 +861,10 @@ function renderBulkList() {
           : emoji}
       </div>
       <div class="bulk-info">
-        <div class="bulk-title">${esc(item.title || item.url)}</div>
+        <div class="bulk-title-row">
+          <div class="bulk-title">${esc(item.title || item.url)}</div>
+          <span class="card-cat bulk-cat-badge cat-${item.cat}" id="bcat-${item.id}">${CAT_LABELS[item.cat]}</span>
+        </div>
         <div class="bulk-url">${esc(item.url)}</div>
         <div class="bulk-status ${statusClass(item)}" id="bs-${item.id}">${statusText(item)}</div>
       </div>
@@ -859,6 +889,8 @@ function updateBulkItem(item) {
   }
 
   row.querySelector('.bulk-title').textContent = item.title || item.url;
+  const catBadge = document.getElementById(`bcat-${item.id}`);
+  if (catBadge) { catBadge.textContent = CAT_LABELS[item.cat]; catBadge.className = `card-cat bulk-cat-badge cat-${item.cat}`; }
   const statusEl = document.getElementById(`bs-${item.id}`);
   statusEl.className = `bulk-status ${statusClass(item)}`;
   statusEl.textContent = statusText(item);
@@ -877,9 +909,12 @@ async function findLinks() {
   findBtn.disabled = true;
   findBtn.textContent = `Found ${urlData.length} link${urlData.length !== 1 ? 's' : ''} — fetching details…`;
 
-  bulkItems = urlData.map((d, i) => ({
-    id: i, url: d.url, title: d.label, image: '', status: 'loading'
-  }));
+  const defaultCat = document.getElementById('bulk-cat').value;
+
+  bulkItems = urlData.map((d, i) => {
+    const cat = guessCategory(d.label, d.url) || defaultCat;
+    return { id: i, url: d.url, title: d.label, image: '', status: 'loading', cat };
+  });
 
   renderBulkList();
   document.getElementById('bulk-import-btn').style.display = 'none';
@@ -893,12 +928,14 @@ async function findLinks() {
       const html = data.contents || '';
       const fetchedTitle = getOgTag(html, 'title') || getTitleTag(html) || '';
       const fetchedImage = getOgTag(html, 'image') || '';
-      // Keep the user's own label over the fetched title — it's usually better
+      // Keep the user's own label over the fetched title
       if (!item.title && fetchedTitle) item.title = fetchedTitle;
       if (fetchedImage) item.image = fetchedImage;
+      // Re-guess category now we have a richer title (only if it was guessed from label alone)
+      const betterCat = guessCategory(item.title, item.url);
+      if (betterCat) item.cat = betterCat;
       item.status = 'done';
     } catch {
-      // If we have a label, item is still usable
       item.status = item.title ? 'partial' : 'failed';
     }
     updateBulkItem(item);
@@ -914,7 +951,7 @@ async function findLinks() {
 }
 
 function bulkImport() {
-  const cat = document.getElementById('bulk-cat').value;
+  const defaultCat = document.getElementById('bulk-cat').value;
   let count = 0;
 
   for (const item of bulkItems) {
@@ -923,7 +960,7 @@ function bulkImport() {
     recipes.unshift({
       id:    Date.now() + count,
       title: item.title || item.url,
-      cat,
+      cat:   item.cat || defaultCat,
       url:   item.url,
       image: item.image || '',
       notes: '', ingredients: '', method: '',
